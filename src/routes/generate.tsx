@@ -1,16 +1,16 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { generateSEOPack } from "@/lib/ai.functions";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { generateSEOPack, hasApiKey, type Brief } from "@/services/gemini";
 import { saveProject } from "@/lib/storage";
 import { toast } from "sonner";
-import { Sparkles, Loader2, Check } from "lucide-react";
+import { Sparkles, Loader2, Check, KeyRound } from "lucide-react";
 
 export const Route = createFileRoute("/generate")({
   head: () => ({ meta: [{ title: "Generate — SEO Blog Pack AI" }] }),
@@ -18,22 +18,22 @@ export const Route = createFileRoute("/generate")({
 });
 
 const STEPS = [
-  "Analyzing business",
-  "Identifying keyword intent",
-  "Generating content cluster",
+  "Analyzing business & keyword intent",
+  "Generating content clusters",
   "Building outline",
   "Writing full blog",
   "Crafting FAQs",
   "Generating metadata",
   "Drafting social posts",
+  "Adding local SEO & competitor insights",
 ];
 
 function GeneratePage() {
   const navigate = useNavigate();
-  const generate = useServerFn(generateSEOPack);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState({
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [form, setForm] = useState<Brief>({
     businessName: "",
     businessDescription: "",
     industry: "",
@@ -42,40 +42,44 @@ function GeneratePage() {
     primaryKeyword: "",
     secondaryKeywords: "",
     competitorUrls: "",
-    contentTone: "Professional" as const,
-    articleLength: "1500" as const,
+    contentTone: "Professional",
+    articleLength: "1500",
   });
 
-  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const required = ["businessName", "businessDescription", "industry", "targetAudience", "targetLocation", "primaryKeyword"];
+    const required: (keyof Brief)[] = ["businessName", "businessDescription", "industry", "targetAudience", "targetLocation", "primaryKeyword"];
     for (const k of required) {
-      if (!(form as any)[k]) { toast.error(`Please fill in ${k}`); return; }
+      if (!form[k]) { toast.error(`Please fill in ${k}`); return; }
+    }
+    if (!hasApiKey()) {
+      setShowKeyModal(true);
+      return;
     }
     setLoading(true);
     setStep(0);
-    const interval = setInterval(() => setStep((s) => (s < STEPS.length - 1 ? s + 1 : s)), 1500);
     try {
-      const result = await generate({ data: form });
-      clearInterval(interval);
-      setStep(STEPS.length - 1);
+      const result = await generateSEOPack(form, (i) => setStep(i));
       const id = crypto.randomUUID();
       saveProject({
         id,
-        title: result?.blog?.title || form.businessName,
+        title: (result as any)?.blog?.title || form.businessName,
         industry: form.industry,
         keyword: form.primaryKeyword,
         brief: form,
-        generatedContent: result,
+        generatedContent: result as any,
         createdAt: new Date().toISOString(),
       });
       toast.success("SEO Pack generated!");
       navigate({ to: "/results/$id", params: { id } });
     } catch (err: any) {
-      clearInterval(interval);
-      toast.error(err.message || "Generation failed");
+      if (err.message === "MISSING_API_KEY") {
+        setShowKeyModal(true);
+      } else {
+        toast.error(err.message || "Generation failed");
+      }
     } finally {
       setLoading(false);
     }
@@ -86,7 +90,7 @@ function GeneratePage() {
       <div className="p-6 md:p-10 max-w-5xl">
         <div className="mb-8">
           <h1 className="text-3xl md:text-4xl font-bold">Generate SEO Pack</h1>
-          <p className="text-muted-foreground mt-1">Fill in your business brief. AI handles the rest.</p>
+          <p className="text-muted-foreground mt-1">Fill in your business brief. Gemini AI handles the rest.</p>
         </div>
 
         {loading ? (
@@ -124,7 +128,7 @@ function GeneratePage() {
             <Field label="Competitor URLs"><Textarea rows={2} value={form.competitorUrls} onChange={(e) => set("competitorUrls", e.target.value)} placeholder="https://competitor.com, …" /></Field>
             <div className="grid md:grid-cols-2 gap-5">
               <Field label="Content Tone">
-                <Select value={form.contentTone} onValueChange={(v) => set("contentTone", v)}>
+                <Select value={form.contentTone} onValueChange={(v) => set("contentTone", v as Brief["contentTone"]) }>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {["Professional", "Friendly", "Technical", "Casual"].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
@@ -132,7 +136,7 @@ function GeneratePage() {
                 </Select>
               </Field>
               <Field label="Article Length">
-                <Select value={form.articleLength} onValueChange={(v) => set("articleLength", v)}>
+                <Select value={form.articleLength} onValueChange={(v) => set("articleLength", v as Brief["articleLength"]) }>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {["1000", "1500", "2000", "3000"].map((t) => <SelectItem key={t} value={t}>{t} words</SelectItem>)}
@@ -146,6 +150,27 @@ function GeneratePage() {
           </form>
         )}
       </div>
+
+      <Dialog open={showKeyModal} onOpenChange={setShowKeyModal}>
+        <DialogContent className="glass">
+          <DialogHeader>
+            <div className="w-12 h-12 rounded-xl bg-gradient-brand flex items-center justify-center mb-3">
+              <KeyRound className="w-5 h-5 text-white" />
+            </div>
+            <DialogTitle>Gemini API Key Required</DialogTitle>
+            <DialogDescription>
+              Please add your Gemini API Key in Settings before generating content. Get a free key at{" "}
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-primary underline">Google AI Studio</a>.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowKeyModal(false)}>Cancel</Button>
+            <Link to="/settings">
+              <Button className="bg-gradient-brand text-white">Go to Settings</Button>
+            </Link>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
