@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+
 import { clearAll, loadProjects } from "@/lib/storage";
 import { toast } from "sonner";
 
@@ -68,4 +68,4 @@ function SettingsPage() {
   );
 }
 
-function _label(_: any) { return Label; }
+
